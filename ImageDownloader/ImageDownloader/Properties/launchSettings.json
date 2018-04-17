@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "ImageDownloader": {
+      "commandName": "Project",
+      "commandLineArgs": "-i ../../../data/ufb_cbu_00009967.xml -u DEFAULT -o  ../../../data/default"
+    }
+  }
+}
