@@ -4,6 +4,7 @@ using System.Xml;
 using System.Linq;
 using System.Net;
 using System.IO;
+using System.Threading;
 
 namespace ImageDownloader
 {
@@ -12,17 +13,24 @@ namespace ImageDownloader
         private static string _help =
             "usage: " + typeof(Program).Assembly.GetName().Name + "[options]\n" +
             "options:\n" +
-            "    -i, --in file          input XML file\n" +
-            "    -o, --out directory    output directory - default: out\n" +
-            "    -u, --use useAttrib    USE attribute of target fileGrp - default: DEFAULT\n" +
-            "    -h, --help             shows this help\n";
+            "    -i, --in file               input XML file\n" +
+            "    -o, --out directory         output directory - default: out\n" +
+            "    -u, --use useAttrib         USE attribute of target fileGrp - default: DEFAULT\n" +
+            "    -t, --threads numThreads    number of threads for downloading files - default: 1\n" +
+            "    -h, --help                  shows this help\n";
 
         private static string _in = "";
         private static string _out = "out";
         private static string _use = "DEFAULT";
+        private static int _numThreads = 1;
+        private static int _totalImages = 0;
+        private static int _imagesDownloaded = 0;
+        private static object _printLock = new object();
 
         static void Main(string[] args)
         {
+            var start = DateTime.Now;
+
             _checkArgs(args);
 
             // gather iamge links from input xml
@@ -34,6 +42,8 @@ namespace ImageDownloader
                 return;
             }
 
+            _totalImages = images.Count();
+
             // fix IIIF links to request highest quality
             if (_use == "IIIF")
                 images = _fixIiifLinks(images);
@@ -41,8 +51,26 @@ namespace ImageDownloader
             // prepare output dir
             Directory.CreateDirectory(_out);
 
+            // split links for threading
+            var threadWorkloads = _splitImageList(images);
+
             // download images
-            _download(images);
+            var threads = new List<Thread>();
+
+            foreach(var workload in threadWorkloads)
+            {
+                var thread = new Thread(new ParameterizedThreadStart(_download));
+                thread.Start(workload);
+                threads.Add(thread);
+            }
+
+            foreach (var thread in threads)
+                thread.Join();
+
+            var end = DateTime.Now;
+            var time = end - start;
+
+            Console.WriteLine(string.Format("Finished in {0} hours, {1} minutes and {2} seconds.", time.Hours, time.Minutes, time.Seconds));
         }
 
         private static void _fail(string message) => Console.WriteLine(message + " Use -h for help.");
@@ -80,6 +108,14 @@ namespace ImageDownloader
                         {
                             _use = args[++i].ToUpper();
                             Console.WriteLine("Using input file " + _out);
+                        }
+                        break;
+                    case "--threads":
+                    case "-t":
+                        if (i < args.Length - 1)
+                        {
+                            _numThreads = int.Parse(args[++i]);
+                            Console.WriteLine("Using " + _numThreads + " threads");
                         }
                         break;
                     case "--help":
@@ -152,8 +188,28 @@ namespace ImageDownloader
             return fixedImages;
         }
 
-        private static void _download(IEnumerable<Image> images)
+        private static IEnumerable<IEnumerable<Image>> _splitImageList(IEnumerable<Image> images)
         {
+            int imagesPerThread = (int)Math.Ceiling((float)images.Count() / _numThreads);
+
+            var result = new List<IEnumerable<Image>>();
+
+            for(var i = 0; i < _numThreads; i++)
+            {
+                var section = images.Skip(i * imagesPerThread).Take(imagesPerThread);
+                // if not last section, take given amount - if last section, just take all remaining
+                if (i <= _numThreads - 1)
+                    section = section.Take(imagesPerThread);
+                result.Add(section);
+            }
+
+            return result;
+        }
+
+        private static void _download(object imagesObject)
+        {
+            var images = (IEnumerable<Image>)imagesObject;
+
             HttpWebRequest request;
             HttpWebResponse response;
             foreach (var image in images)
@@ -184,7 +240,13 @@ namespace ImageDownloader
                     sw.Close();
                 }
 
-                Console.WriteLine("Successfully downloaded " + image.Id + ".");
+                lock (_printLock)
+                {
+                    _imagesDownloaded++;
+                    Console.WriteLine("Successfully downloaded " + image.Id + ". Total progress: "  + _imagesDownloaded + "/" + _totalImages + " images.");
+                }
+
+                
             }
         }
 
