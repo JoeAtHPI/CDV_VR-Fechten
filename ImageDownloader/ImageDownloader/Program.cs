@@ -36,7 +36,7 @@ namespace ImageDownloader
 
             // fix IIIF links to request highest quality
             if (_use == "IIIF")
-                _fixIiifLinks(images);
+                images = _fixIiifLinks(images);
 
             // prepare output dir
             Directory.CreateDirectory(_out);
@@ -125,23 +125,31 @@ namespace ImageDownloader
                     Id = n.Attributes.GetNamedItem("ID").Value });
         }
 
-        private static void _fixIiifLinks(IEnumerable<Image> images)
+        private static IEnumerable<Image> _fixIiifLinks(IEnumerable<Image> images)
         {
+            var fixedImages = new List<Image>(images.Count());
+
+            Console.WriteLine("Fixing IIIF links...");
             foreach (var image in images)
             {
-                Console.WriteLine(image.Url);
+                Console.WriteLine("Old: " + image.Url);
                 var split = image.Url.Split('/');
                 var index = split.Count() - 1;
                 // quality and type
-                split[index--] = "native.tif";
+                split[index--] = "default.tif";
                 // rotation
                 split[index--] = "0";
                 // size
                 split[index--] = "full";
                 // region
                 split[index--] = "full";
-                Console.WriteLine(string.Join('/', split));
+                image.Url = string.Join('/', split);
+                Console.WriteLine("New: " + image.Url);
+
+                fixedImages.Add(new Image() { Id = image.Id, Url = image.Url });
             }
+
+            return fixedImages;
         }
 
         private static void _download(IEnumerable<Image> images)
@@ -150,6 +158,7 @@ namespace ImageDownloader
             HttpWebResponse response;
             foreach (var image in images)
             {
+                Console.WriteLine("Downloading " + image.Url + "...");
                 // request image
                 request = WebRequest.CreateHttp(image.Url);
                 try
@@ -187,11 +196,12 @@ namespace ImageDownloader
                     return ".jpg";
                 case "image/png":
                     return ".png";
+                case "image/tif":
+                    return ".tif";
                 case "application/pdf":
                     return ".pdf";
-                case "text/html":
-                    return ".tif";
                 default:
+                    Console.WriteLine("Unknown format: " + contentType);
                     return ".bin";
             }
         }
