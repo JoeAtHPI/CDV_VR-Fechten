@@ -13,11 +13,12 @@ namespace ImageDownloader
         private static string _help =
             "usage: " + typeof(Program).Assembly.GetName().Name + "[options]\n" +
             "options:\n" +
-            "    -i, --in file               input XML file\n" +
-            "    -o, --out directory         output directory - default: out\n" +
-            "    -u, --use useAttrib         USE attribute of target fileGrp - default: DEFAULT\n" +
-            "    -t, --threads numThreads    number of threads for downloading files - default: 1\n" +
-            "    -h, --help                  shows this help\n";
+            "    -i, --in file                       input XML file\n" +
+            "    -o, --out directory                 output directory - default: out\n" +
+            "    -u, --use useAttrib                 USE attribute of target fileGrp - default: DEFAULT\n" +
+            "    -t, --threads numThreads            number of threads for downloading files - default: 1\n" +
+            "    -to, --threadOffset threadOffset    time in ms between starting the threads - default: 0\n" +
+            "    -h, --help                          shows this help\n";
 
         private static string _in = "";
         private static string _out = "out";
@@ -25,7 +26,9 @@ namespace ImageDownloader
         private static int _numThreads = 1;
         private static int _totalImages = 0;
         private static int _imagesDownloaded = 0;
+        private static long _bytesDownloaded = 0;
         private static object _printLock = new object();
+        private static int _threadOffset = 0;
 
         static void Main(string[] args)
         {
@@ -57,11 +60,14 @@ namespace ImageDownloader
             // download images
             var threads = new List<Thread>();
 
+            int threadCount = 1;
             foreach(var workload in threadWorkloads)
             {
                 var thread = new Thread(new ParameterizedThreadStart(_download));
                 thread.Start(workload);
                 threads.Add(thread);
+                Console.WriteLine("Started thread " + threadCount++ + ".");
+                Thread.Sleep(_threadOffset);
             }
 
             foreach (var thread in threads)
@@ -71,6 +77,10 @@ namespace ImageDownloader
             var time = end - start;
 
             Console.WriteLine(string.Format("Finished in {0} hours, {1} minutes and {2} seconds.", time.Hours, time.Minutes, time.Seconds));
+
+            (var reducedBytes, var bytePrefix) = _reduceBytes(_bytesDownloaded);
+            (var reducedBits, var bitPrefix) = _reduceBytes(_bytesDownloaded * 8 / time.TotalSeconds);
+            Console.WriteLine(string.Format("Downloaded a total of {0} {1}B with an average speed of {2:###0.#} {3}bit/s.", reducedBytes, bytePrefix, reducedBits, bitPrefix));
         }
 
         private static void _fail(string message) => Console.WriteLine(message + " Use -h for help.");
@@ -116,6 +126,14 @@ namespace ImageDownloader
                         {
                             _numThreads = int.Parse(args[++i]);
                             Console.WriteLine("Using " + _numThreads + " threads");
+                        }
+                        break;
+                    case "--threadOffset":
+                    case "-to":
+                        if (i < args.Length - 1)
+                        {
+                            _threadOffset = int.Parse(args[++i]);
+                            Console.WriteLine("Using thread offset " + _threadOffset);
                         }
                         break;
                     case "--help":
@@ -243,6 +261,7 @@ namespace ImageDownloader
                 lock (_printLock)
                 {
                     _imagesDownloaded++;
+                    _bytesDownloaded += response.ContentLength;
                     Console.WriteLine("Successfully downloaded " + image.Id + ". Total progress: "  + _imagesDownloaded + "/" + _totalImages + " images.");
                 }
 
@@ -265,6 +284,51 @@ namespace ImageDownloader
                 default:
                     Console.WriteLine("Unknown format: " + contentType);
                     return ".bin";
+            }
+        }
+
+        private static (long, string) _reduceBytes(long bytes)
+        {
+            var reducedBytes = bytes;
+            var reduceFactor = 1L;
+
+            while (reducedBytes > 1024)
+            {
+                reducedBytes /= 1024;
+                reduceFactor *= 1024;
+            }
+
+            return (reducedBytes, _getPrefix(reduceFactor));
+        }
+
+        private static (double, string) _reduceBytes(double bytes)
+        {
+            var reducedBytes = bytes;
+            var reduceFactor = 1L;
+
+            while (reducedBytes > 1024)
+            {
+                reducedBytes /= 1024;
+                reduceFactor *= 1024;
+            }
+
+            return (reducedBytes, _getPrefix(reduceFactor));
+        }
+
+        private static string _getPrefix(long reduceFactor)
+        {
+            switch (reduceFactor)
+            {
+                case 1024L:
+                    return "K";
+                case 1024L * 1024:
+                    return "M";
+                case 1024L * 1024 * 1024:
+                    return "G";
+                case 1024L * 1024 * 1024 * 1024:
+                    return "T";
+                default:
+                    return "";
             }
         }
     }
